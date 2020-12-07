@@ -1414,7 +1414,7 @@ bool GuiTextBox(Rectangle bounds, char *text, int textSize, bool editMode)
             state = GUI_STATE_PRESSED;
             framesCounter++;
 
-            int key = GetKeyPressed();
+            int key = GetKeyPressed();      // Returns codepoint as Unicode
             int keyCount = strlen(text);
 
             // Only allow keys in range [32..125]
@@ -1422,15 +1422,18 @@ bool GuiTextBox(Rectangle bounds, char *text, int textSize, bool editMode)
             {
                 int maxWidth = (bounds.width - (GuiGetStyle(TEXTBOX, TEXT_INNER_PADDING)*2));
 
-                if (GetTextWidth(text) < (maxWidth - GuiGetStyle(DEFAULT, TEXT_SIZE)))
+                if ((GetTextWidth(text) < (maxWidth - GuiGetStyle(DEFAULT, TEXT_SIZE))) && (key >= 32))
                 {
-                    if (((key >= 32) && (key <= 125)) ||
-                        ((key >= 128) && (key < 255)))
+                    int byteLength = 0;
+                    const char *textUtf8 = CodepointToUtf8(key, &byteLength);
+                    
+                    for (int i = 0; i < byteLength; i++)
                     {
-                        text[keyCount] = (char)key;
+                        text[keyCount] = textUtf8[i];
                         keyCount++;
-                        text[keyCount] = '\0';
                     }
+
+                    text[keyCount] = '\0';
                 }
             }
 
@@ -1768,21 +1771,25 @@ bool GuiTextBoxMulti(Rectangle bounds, char *text, int textSize, bool editMode)
 
             // Calculate cursor position considering text
             char oneCharText[2] = { 0 };
-            int lastSpacePos = 0;
+            int lastBreakingPos = -1;
 
-            for (int i = 0; i < keyCount; i++)
+            for (int i = 0; i < keyCount && currentLine < keyCount; i++)
             {
                 oneCharText[0] = text[i];
                 textWidth += (GetTextWidth(oneCharText) + GuiGetStyle(DEFAULT, TEXT_SPACING));
 
-                if (textWidth >= textAreaBounds.width)
+                if (text[i] == ' ' || text[i] == '\n') lastBreakingPos = i;
+
+                if ( text[i] == '\n' || textWidth >= textAreaBounds.width)
                 {
                     currentLine++;
                     textWidth = 0;
-                    i = lastSpacePos;
-                }
 
-                if (text[i] == ' ') lastSpacePos = i;
+                    if (lastBreakingPos > 0) i = lastBreakingPos;
+                    else textWidth += (GetTextWidth(oneCharText) + GuiGetStyle(DEFAULT, TEXT_SPACING));
+
+                    lastBreakingPos = -1;
+                }
             }
 
             cursor.x = bounds.x + GuiGetStyle(TEXTBOX, BORDER_WIDTH) + GuiGetStyle(TEXTBOX, TEXT_INNER_PADDING) + textWidth - GuiGetStyle(DEFAULT, TEXT_SPACING);
@@ -3667,6 +3674,44 @@ static int TextToInteger(const char *text)
     for (int i = 0; ((text[i] >= '0') && (text[i] <= '9')); ++i) value = value*10 + (int)(text[i] - '0');
 
     return value*sign;
+}
+
+// Encode codepoint into utf8 text (char array length returned as parameter)
+static const char *CodepointToUtf8(int codepoint, int *byteLength)
+{
+    static char utf8[6] = { 0 };
+    int length = 0;
+
+    if (codepoint <= 0x7f)
+    {
+        utf8[0] = (char)codepoint;
+        length = 1;
+    }
+    else if (codepoint <= 0x7ff)
+    {
+        utf8[0] = (char)(((codepoint >> 6) & 0x1f) | 0xc0);
+        utf8[1] = (char)((codepoint & 0x3f) | 0x80);
+        length = 2;
+    }
+    else if (codepoint <= 0xffff)
+    {
+        utf8[0] = (char)(((codepoint >> 12) & 0x0f) | 0xe0);
+        utf8[1] = (char)(((codepoint >>  6) & 0x3f) | 0x80);
+        utf8[2] = (char)((codepoint & 0x3f) | 0x80);
+        length = 3;
+    }
+    else if (codepoint <= 0x10ffff)
+    {
+        utf8[0] = (char)(((codepoint >> 18) & 0x07) | 0xf0);
+        utf8[1] = (char)(((codepoint >> 12) & 0x3f) | 0x80);
+        utf8[2] = (char)(((codepoint >>  6) & 0x3f) | 0x80);
+        utf8[3] = (char)((codepoint & 0x3f) | 0x80);
+        length = 4;
+    }
+
+    *byteLength = length;
+
+    return utf8;
 }
 #endif      // RAYGUI_STANDALONE
 
